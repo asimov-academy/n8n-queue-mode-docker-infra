@@ -1,0 +1,175 @@
+version: "4.0"
+
+services:
+  # === N8N CORE DATABASE (PostgreSQL) ===
+  database:
+    image: postgres:16
+    container_name: database
+    hostname: database
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - database_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # === N8N QUEUE (Redis) ===
+  queue:
+    image: redis:7-alpine
+    container_name: queue
+    hostname: queue
+    restart: unless-stopped
+    command: >
+      sh -c "redis-server --appendonly yes
+             --requirepass \"$REDIS_PASSWORD\""
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - queue_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # === N8N WEB ===
+  n8n:
+    image: n8nio/n8n:1.120.4
+    container_name: n8n
+    hostname: n8n
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=database
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_POSTGRESDB_SCHEMA=public
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=queue
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - QUEUE_BULL_REDIS_DB=0
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # === N8N WORKER ===
+  n8n-worker:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n-worker
+    hostname: n8n-worker
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=database
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_POSTGRESDB_SCHEMA=public
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=queue
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - QUEUE_BULL_REDIS_DB=0
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+    command: worker --concurrency=5
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # === AI AGENT DATABASE (PostgreSQL para o agente) ===
+  database-tool:
+    image: postgres:16
+    container_name: database-tool
+    hostname: database-tool
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${TOOL_DB_USER}
+      POSTGRES_PASSWORD: ${TOOL_DB_PASSWORD}
+      POSTGRES_DB: ${TOOL_DB_NAME}
+    ports:
+      - "5433:5432"
+    volumes:
+      - database_tool_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TOOL_DB_USER} -d ${TOOL_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # === AI AGENT MEMORY (Redis para o agente) ===
+  memory:
+    image: redis:7-alpine
+    container_name: memory
+    hostname: memory
+    restart: unless-stopped
+    command: ["redis-server","--appendonly","yes","--requirepass","${MEMORY_PASSWORD}"]
+    environment:
+      - MEMORY_PASSWORD=${MEMORY_PASSWORD}
+    ports:
+      - "6380:6379"   # opcional: acesso externo
+    volumes:
+      - memory_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${MEMORY_PASSWORD}", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # === PGADMIN (UI para o database-tool) ===
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: pgadmin
+    hostname: pgadmin
+    restart: unless-stopped
+    depends_on:
+      database-tool:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: 40
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  database_data:
+  queue_data:
+  n8n_data:
+  database_tool_data:
+  memory_data:
+  pgadmin_data:
