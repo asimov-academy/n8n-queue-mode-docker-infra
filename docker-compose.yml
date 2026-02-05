@@ -50,7 +50,7 @@ services:
       queue:
         condition: service_healthy
     ports:
-      - "5678:5678"
+      # - "5678:5678" # Access via Nginx on port 3010
     environment:
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=database
@@ -74,6 +74,18 @@ services:
       - N8N_PROTOCOL=http
     volumes:
       - n8n_data:/home/node/.n8n
+
+  # === NGINX REVERSE PROXY ===
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "3010:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - n8n
 
   # === N8N WORKER ===
   n8n-worker:
